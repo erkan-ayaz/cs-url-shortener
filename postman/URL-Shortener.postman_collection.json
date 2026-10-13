@@ -1,0 +1,188 @@
+{
+  "info": {
+    "_postman_id": "d5ef82bb-a6b7-4a74-a7b8-fec531da1c34",
+    "name": "URL Shortener API",
+    "description": "Local API checks for link creation, redirects, analytics, invalid input, and missing links. Run Create link before Redirect and Analytics.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create link",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.environment.set('expiresAt', new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns 201 Created', function () { pm.response.to.have.status(201); });",
+              "const body = pm.response.json();",
+              "pm.test('returns an eight-character Base62 code', function () { pm.expect(body.code).to.match(/^[0-9A-Za-z]{8}$/); });",
+              "pm.test('returns a short URL and destination', function () { pm.expect(body.short_url).to.include('/' + body.code); pm.expect(body.url).to.eql(pm.environment.get('destinationUrl')); });",
+              "pm.environment.set('shortCode', body.code);",
+              "pm.environment.set('shortUrl', body.short_url);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"url\": \"{{destinationUrl}}\",\n  \"expires_at\": \"{{expiresAt}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/links" }
+      },
+      "response": []
+    },
+    {
+      "name": "Redirect created link",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns 302 Found', function () { pm.response.to.have.status(302); });",
+              "pm.test('points to the original destination', function () { pm.expect(pm.response.headers.get('Location')).to.eql(pm.environment.get('destinationUrl')); });",
+              "pm.test('does not return a response body', function () { pm.expect(pm.response.text()).to.eql(''); });"
+            ]
+          }
+        }
+      ],
+      "protocolProfileBehavior": { "followRedirects": false },
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/{{shortCode}}" }
+      },
+      "response": []
+    },
+    {
+      "name": "Read link analytics",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const now = Date.now();",
+              "pm.environment.set('analyticsFrom', new Date(now - 10 * 60 * 1000).toISOString());",
+              "pm.environment.set('analyticsTo', new Date(now + 10 * 60 * 1000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns analytics', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "pm.test('includes the created code and redirect count', function () { pm.expect(body.code).to.eql(pm.environment.get('shortCode')); pm.expect(body.redirect_count).to.be.at.least(1); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/v1/links/{{shortCode}}/analytics?from={{analyticsFrom}}&to={{analyticsTo}}" }
+      },
+      "response": []
+    },
+    {
+      "name": "Reject unsupported destination scheme",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns 400 Bad Request', function () { pm.response.to.have.status(400); });",
+              "pm.test('returns the standard error shape', function () { const body = pm.response.json(); pm.expect(body.status).to.eql(400); pm.expect(body.path).to.eql('/api/v1/links'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"url\": \"javascript:alert(1)\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{baseUrl}}/api/v1/links" }
+      },
+      "response": []
+    },
+    {
+      "name": "Unknown short code",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns 404 Not Found', function () { pm.response.to.have.status(404); });",
+              "pm.test('identifies the request path', function () { const body = pm.response.json(); pm.expect(body.status).to.eql(404); pm.expect(body.path).to.eql('/' + pm.environment.get('unknownCode')); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/{{unknownCode}}" }
+      },
+      "response": []
+    },
+    {
+      "name": "Reject analytics range over configured maximum",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const from = Date.now();",
+              "pm.environment.set('analyticsFrom', new Date(from).toISOString());",
+              "pm.environment.set('analyticsTo', new Date(from + 367 * 24 * 60 * 60 * 1000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns 400 for an excessive date range', function () { pm.response.to.have.status(400); });",
+              "pm.test('returns the standard error shape', function () { pm.expect(pm.response.json().status).to.eql(400); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/v1/links/{{shortCode}}/analytics?from={{analyticsFrom}}&to={{analyticsTo}}" }
+      },
+      "response": []
+    }
+  ]
+}

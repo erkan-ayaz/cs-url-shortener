@@ -1,0 +1,40 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: cs-url-shortener
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:shortener;DB_CLOSE_DELAY=-1}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:2000}
+      validation-timeout: ${DB_VALIDATION_TIMEOUT_MS:1000}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  h2:
+    console:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  link:
+    public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+    default-ttl: ${APP_LINK_DEFAULT_TTL:30d}
+    max-ttl: ${APP_LINK_MAX_TTL:365d}
+    max-analytics-range: ${APP_LINK_MAX_ANALYTICS_RANGE:366d}
+    max-url-length: ${APP_LINK_MAX_URL_LENGTH:2048}

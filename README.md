@@ -2,15 +2,15 @@
 
 A Spring Boot URL shortener for creating compact links, redirecting visitors, and reporting aggregate usage. The initial implementation uses an automatically created H2 in-memory database, with explicit expiration semantics and bounded database operations. Data is temporary and is lost when the application process stops.
 
-> **Repository status:** this checkout currently contains documentation only. It has no application source, Gradle build or wrapper, database migrations, or tests. The stack, commands, variables, and API below specify the implementation contract; they are not currently executable in this checkout.
+> **Implementation status:** the Spring MVC/JPA API, H2/Flyway configuration, and H2-backed API tests are implemented. H2 data is in-memory and lost at shutdown. Authentication, caching, and PostgreSQL support remain deferred.
 
-## Proposed Stack
+## Implemented Stack
 
 - Java 17 and Spring Boot 3 for the HTTP API and application services.
 - H2 in-memory as the default database, accessed with Spring Data JPA; Flyway initializes the schema on startup.
 - PostgreSQL support is a deferred option. The runner can select it through datasource configuration after the PostgreSQL JDBC driver and database are provided.
 - Gradle Wrapper for builds and dependency management.
-- JUnit 5 and Spring Boot Test. Tests run against H2 by default; no external database or Testcontainers is required.
+- JUnit 5, Spring Boot Test, Google Java Format, and JaCoCo. Gradle `check` enforces formatting and at least 80% line coverage.
 - Caching and external security integrations are intentionally outside the initial implementation scope.
 
 ## Capabilities
@@ -20,9 +20,9 @@ A Spring Boot URL shortener for creating compact links, redirecting visitors, an
 - `GET /api/v1/links/{code}/analytics` returns aggregate redirect counts over a requested time window.
 - Eight-character Base62 codes are generated from cryptographically secure random values. A database uniqueness constraint is authoritative; collisions are retried.
 - Expired links are not redirected and return `410 Gone`. Unknown codes return `404 Not Found`.
-- H2 transactions and constraints, request timeouts, health checks, structured logs, and metrics provide the initial reliability layers. Redirects and analytics use the same in-memory database; no cache is assumed.
+- H2 transactions and constraints, bounded datasource connection/JDBC statement timeouts, health checks, Logback logs, and Micrometer metrics provide the initial reliability layers. These database timeouts do not impose a complete end-to-end MVC request deadline. Redirects and analytics use the same in-memory database; no cache is assumed.
 
-The detailed contracts and behavioral decisions are in [ARCHITECTURE.md](ARCHITECTURE.md).
+The system design is in [ARCHITECTURE.md](ARCHITECTURE.md). Assignment workflow evidence, brownfield validation, test plans, and engineer sign-off are in [WORKFLOW_EVIDENCE.md](WORKFLOW_EVIDENCE.md).
 
 ## API At A Glance
 
@@ -74,7 +74,7 @@ H2 in-memory is the default for this phase. Spring Boot opens the database when 
 
 ### Configure
 
-`src/main/resources/application.yml` should provide H2 defaults and allow environment variables to override the datasource. Spring Boot infers the JDBC driver from the selected URL; Flyway owns schema creation and Hibernate validates the mapped schema.
+[`src/main/resources/application.yml`](src/main/resources/application.yml) provides H2 defaults and allows environment variables to override the datasource. Spring Boot infers the JDBC driver from the selected URL; Flyway applies the schema migration and Hibernate validates the mapped schema.
 
 ```yaml
 spring:
@@ -97,21 +97,23 @@ export PUBLIC_BASE_URL=http://localhost:8080
 export APP_LINK_DEFAULT_TTL=30d
 export APP_LINK_MAX_TTL=365d
 export APP_LINK_MAX_URL_LENGTH=2048
+export DB_CONNECTION_TIMEOUT_MS=2000
+export DB_VALIDATION_TIMEOUT_MS=1000
 ```
 
 For a future PostgreSQL run, set `SPRING_DATASOURCE_URL` to a `jdbc:postgresql:` URL and provide `SPRING_DATASOURCE_USERNAME` and `SPRING_DATASOURCE_PASSWORD`. The PostgreSQL driver and a reachable database must also be available. Production database credentials should come from a secret manager. Authentication, authorization, distributed rate limiting, and destination reputation scanning are deferred integrations, not capabilities of the initial implementation.
 
 ### Start the service
 
-The commands below define the intended workflow once the application scaffold and Gradle Wrapper are added. They cannot run in the current documentation-only checkout.
+The Gradle Wrapper and application are ready to run. The default H2 database is created in memory as Spring initializes the datasource, then Flyway applies the schema migration.
 
-1. Build and run unit tests:
+1. Run formatting, tests, and coverage checks:
 
    ```sh
-   ./gradlew clean test
+   ./gradlew clean check
    ```
 
-2. Start the API. Spring Boot creates the H2 database and runs Flyway migrations as it initializes the datasource:
+2. Start the API:
 
    ```sh
    ./gradlew bootRun
@@ -140,30 +142,35 @@ The commands below define the intended workflow once the application scaffold an
 | `APP_LINK_DEFAULT_TTL` | Optional default lifetime for a newly created link. |
 | `APP_LINK_MAX_TTL` | Maximum permitted lifetime for an explicitly expiring link. |
 | `APP_LINK_MAX_URL_LENGTH` | Maximum accepted destination URL length. |
+| `DB_CONNECTION_TIMEOUT_MS` | Maximum time Hikari waits to acquire a database connection; defaults to 2000 ms. |
+| `DB_VALIDATION_TIMEOUT_MS` | Maximum time Hikari waits to validate a connection; defaults to 1000 ms. |
+| JPA query/transaction timeout | Repository query hints and Spring transactions bound database operations to 2 seconds. |
 
 Exact variable names are proposed and must be kept synchronized with the implementation and deployment manifests. No Redis or security-integration configuration is required for this scope.
 
+Actuator exposes `/actuator/health`, `/actuator/health/readiness`, `/actuator/metrics`, and application counters such as `shortener.links.created` and `shortener.redirects`. The metrics endpoint is for local/controlled operations; do not expose it publicly without an access-control boundary.
+
 ## Testing Approach
 
-No tests or coverage data exist in this checkout. The intended test suite separates fast deterministic logic tests from H2-backed integration tests that exercise the HTTP and persistence behavior. No container runtime or Testcontainers is used.
+The current suite has four Spring Boot/MockMvc integration tests against H2: create/redirect/analytics, invalid destination, unknown code, and expired link. There are not yet isolated unit tests for the service or code generator. No container runtime or Testcontainers is used. Spotless applies Google Java Format; JaCoCo measures line coverage and fails `check` below 80%.
 
-- **Unit tests:** Base62 encode/decode boundaries, fixed-width output, random code generation, URL validation, TTL policy, status mapping, and collision retry exhaustion.
-- **Database integration tests:** Flyway migrations, uniqueness under collision, atomic link creation, expiration queries, and analytics aggregation against an isolated H2 in-memory database.
-- **API tests:** request validation and response schemas; `201`, `302`, `404`, `410`, and database-failure responses; health endpoints; and redirect headers.
-- **Resilience tests:** H2 datasource initialization, query timeouts, concurrent code collisions, analytics write failures, and load tests for database-backed redirects.
-- **Coverage target:** establish a CI baseline of at least 85% line coverage for application logic, with explicit tests for input-validation and expiration-policy branches. Coverage is a signal, not a substitute for behavior assertions.
+- **Implemented integration coverage:** datasource startup, Flyway migration, API link creation, `302` redirect, analytics count, invalid destination `400`, unknown code `404`, and expired code `410` without a `Location` header or analytics event.
+- **Remaining tests:** isolated Base62 boundaries/randomness, TTL edge cases, analytics range validation, deterministic collision retry/exhaustion, database failure mapping, and redirect-event write failure are listed in [TODO.md](TODO.md).
+- **Coverage gate:** JaCoCo enforces at least 80% line coverage across production code during `check`. Coverage is a signal, not a substitute for behavior assertions.
+- **Static analysis:** SonarQube/SonarCloud integration, quality profiles, and remote quality gates are deferred; no Sonar plugin, credentials, or server is required.
 
-Intended commands after the Gradle project and test configuration are implemented:
+Useful local verification commands:
 
 ```sh
 ./gradlew test
+./gradlew spotlessCheck
+./gradlew jacocoTestReport
+./gradlew check
 ```
 
-Configure an `integrationTest` Gradle task and integration-test source set so database-dependent tests can be run explicitly. H2 is the default for that task as well. PostgreSQL compatibility tests are deferred until a PostgreSQL driver and database are added; those tests can use a developer-managed database and do not require Testcontainers.
+Run `./gradlew spotlessApply` to apply Google Java Format. The `check` task runs formatting validation, tests, and the JaCoCo 80% line-coverage gate. The HTML report is written to `build/reports/jacoco/test/html/index.html`. Sonar integration is deferred. There is no separate `integrationTest` task; PostgreSQL compatibility tests are deferred until its JDBC driver and datasource are added.
 
-```sh
-./gradlew integrationTest
-```
+Pull requests run the same Gradle quality gate through [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Dependency and GitHub Actions update proposals are configured in [`.github/dependabot.yml`](.github/dependabot.yml). See [WORKFLOW_EVIDENCE.md](WORKFLOW_EVIDENCE.md) for validation limits and security-scanning follow-up.
 
 ## Assumptions And Limitations
 
@@ -175,4 +182,4 @@ Configure an `integrationTest` Gradle task and integration-test source set so da
 - No authentication, authorization, distributed rate limiting, or external destination-scanning integration is included. Do not expose link creation or analytics to untrusted networks until suitable controls are integrated.
 - PostgreSQL durability, multi-instance shared state, caching, custom domains, user-facing link management, and high-scale asynchronous analytics are deferred. Configure PostgreSQL before using this service where links must survive restarts or be shared across replicas.
 - URL syntax validation alone does not establish destination safety. Reputation scanning, takedown workflows, and abuse operations require separate integrations and operational decisions.
-- This repository has no runnable service yet. The stated stack, interfaces, environment variables, and commands are a design proposal and must be verified against implementation as it is built.
+- This is a runnable evaluation prototype, not a production-ready service. H2 data is volatile, and authentication, authorization, caching, durable shared storage, and other deferred integrations are not implemented.

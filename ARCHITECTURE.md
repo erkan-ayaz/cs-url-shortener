@@ -2,7 +2,7 @@
 
 ## Purpose And Status
 
-This document defines the implementation contract for a URL shortener built with Java 17, Spring Boot 3, Spring Data JPA, H2, and Flyway. Gradle Wrapper is the build tool. The current repository is documentation-only; these are design decisions, not claims about deployed code. The initial mode is a single application process with a volatile H2 in-memory database. Caching and security integrations are deliberately excluded from the implementation scope. PostgreSQL is a deferred datasource option selected through configuration when durable or shared storage is needed; the initial mode requires no database server, Docker Desktop, or Testcontainers.
+This document describes the implemented URL shortener built with Java 17, Spring Boot 3, Spring Data JPA, H2, and Flyway. Gradle Wrapper is the build tool. The application includes MVC controllers, JPA entities/repositories, a service interface and implementation, startup configuration, migration, and H2-backed API tests. The initial mode is a single application process with a volatile H2 in-memory database. Caching and security integrations are deliberately excluded from the implementation scope. PostgreSQL is a deferred datasource option for durable or shared storage; the initial mode requires no database server, Docker Desktop, or Testcontainers.
 
 ## System Overview
 
@@ -34,7 +34,7 @@ This document defines the implementation contract for a URL shortener built with
 - **Application services:** Spring services own code generation, URL/expiry policy, persistence orchestration, redirect resolution, and analytics behavior. Keep controllers thin and test domain decisions independently.
 - **Persistence:** The default datasource is H2 in-memory, selected in `application.yml` and overridable through standard Spring datasource environment variables. Spring Data JPA and parameterized queries provide persistence; Flyway initializes the schema. A unique primary key/constraint on `code` is the final collision arbiter. The database is created when Spring opens the datasource and exists only for the process lifetime.
 - **Analytics:** Redirect observations are stored in the same H2 instance and queried as aggregates. This avoids a separate service but adds database write load to the redirect path; all analytics are lost on shutdown.
-- **Operations:** Spring Boot Actuator exposes liveness and readiness. Readiness reflects datasource availability. Structured logs, metrics, traces, and alerts support diagnosis without logging full destination URLs.
+- **Operations:** Spring Boot Actuator exposes liveness/readiness and Micrometer metrics. Logback writes application logs to the console. Distributed tracing and alert delivery are not configured. Do not log full destination URLs or API secrets.
 - **Deferred options:** PostgreSQL via a separately supplied JDBC driver and database provides durable/shared state; Redis caching can be considered after moving to a shared database. External identity/API-key management, distributed rate limiting, and external URL reputation scanning are also deferred. The security section distinguishes in-scope secure coding from these deferred integrations.
 
 ### Data Model
@@ -104,7 +104,7 @@ Expected errors: `400` malformed request or invalid URL/expiry, `409` idempotenc
 
 ### Analytics
 
-`GET /api/v1/links/{code}/analytics?from=<RFC3339>&to=<RFC3339>` returns `200` with `code`, normalized interval, `redirect_count`, and optional bucket data. Validate maximum interval and bucket cardinality. Return `400` for invalid or excessive ranges and `404` for unknown codes. Because authorization is not integrated, this endpoint must not be publicly exposed where usage data is sensitive.
+`GET /api/v1/links/{code}/analytics?from=<RFC3339>&to=<RFC3339>` returns `200` with `code`, normalized `from`/`to` timestamps, and `redirect_count`. The query interval is half-open (`from <= occurred_at < to`). The implementation returns a total count only; bucketed analytics are not implemented. Return `400` for invalid or excessive ranges and `404` for unknown codes. Because authorization is not integrated, this endpoint must not be publicly exposed where usage data is sensitive.
 
 ## Base62 Code Generation
 
@@ -150,12 +150,12 @@ Record decisions in an ADR when product answers change these defaults. Convert e
 
 ### Threat controls
 
-- **In-scope secure coding:** Validate URL scheme, syntax, length, and expiry; use parameterized Spring Data/JPA queries; apply database constraints; return generic errors; bound request/query timeouts; and use least-privilege database credentials. These controls do not replace authentication or a security integration.
+- **In-scope secure coding:** Validate URL scheme, syntax, length, and expiry; use parameterized Spring Data/JPA queries; apply database constraints; return generic errors; bound datasource connection acquisition and JDBC statement execution; and use least-privilege database credentials. These datasource timeouts do not enforce a full end-to-end synchronous MVC request deadline and do not replace authentication or a security integration.
 - **Malicious redirects and phishing:** Reject `javascript:`, `data:`, embedded credentials, malformed hosts, and control characters. A syntactically valid URL can still be malicious. Abuse reporting, moderation/deny-list services, and destination reputation scanning are deferred integrations.
 - **SSRF:** Redirecting a user does not itself fetch the target. If reputation scanning or preview fetching is later added, isolate it from the API, restrict outbound egress, block loopback/private/link-local/reserved and cloud metadata ranges after DNS resolution, defend against DNS rebinding, and cap redirects, response size, and time.
 - **Authentication and abuse controls:** Authentication, authorization, API-key management, distributed rate limiting, bot detection, quotas, and abuse operations are out of current scope. Random codes reduce predictability but are not authorization. Management and analytics endpoints must not be exposed to untrusted networks until appropriate controls are integrated.
 - **Privacy:** Do not persist raw IP addresses or full referrers by default. Define analytics retention and deletion behavior before launch.
-- **Denial of service:** Enforce body and URL limits, request deadlines, connection/pool bounds, and concurrency budgets. There is no cache or distributed rate limiter in the initial implementation.
+- **Denial of service:** Enforce body and URL limits, datasource connection/query timeouts, connection-pool bounds, and concurrency budgets. A total synchronous HTTP request deadline, cache, and distributed rate limiter are not implemented.
 
 ### Reliability And Consistency
 
@@ -167,7 +167,11 @@ Record decisions in an ADR when product answers change these defaults. Convert e
 
 ## Operational Signals
 
-Emit request count/latency/status by route, database query latency and pool saturation, code collision retries, analytics write failures, and expiration outcomes. Avoid `code`, destination URL, and raw IP as metric labels. Use request IDs for trace correlation, redact sensitive values, and define alerts around user-visible SLOs rather than infrastructure noise alone.
+Actuator/Micrometer exposes `http.server.requests` and datasource/Hikari metrics. Application counters are `shortener.links.created` and `shortener.redirects`; redirect counters have bounded `outcome` and HTTP `status` tags. Logback records link creation at INFO, redirect success at TRACE, expected redirect errors at INFO, and redirect server errors at WARN. Code-collision retry counts, analytics write failures, and expiration outcomes are not currently emitted as metrics. Avoid `code`, destination URL, and raw IP as metric labels. Distributed tracing, request-ID correlation, and alert delivery are not configured; add them when an operational backend and SLOs are selected.
+
+Hikari connection acquisition and validation timeouts are configurable in milliseconds. Repository query hints and Spring transaction timeouts bound database operations to two seconds. These settings bound database waits but do not guarantee a total wall-clock deadline for synchronous MVC requests. Size the connection pool and timeout values against the selected datasource and expected workload.
+
+The Gradle `check` lifecycle enforces Google Java Format and a minimum 80% JaCoCo line-coverage ratio. SonarQube/SonarCloud analysis and remote quality gates are deferred; the build has no Sonar plugin or credentials requirement.
 
 ## Scaling Path And Known Limits
 

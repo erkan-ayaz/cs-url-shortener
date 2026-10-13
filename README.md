@@ -22,7 +22,7 @@ A Spring Boot URL shortener for creating compact links, redirecting visitors, an
 - Expired links are not redirected and return `410 Gone`. Unknown codes return `404 Not Found`.
 - H2 transactions and constraints, bounded datasource connection/JDBC statement timeouts, health checks, Logback logs, and Micrometer metrics provide the initial reliability layers. These database timeouts do not impose a complete end-to-end MVC request deadline. Redirects and analytics use the same in-memory database; no cache is assumed.
 
-The system design is in [ARCHITECTURE.md](ARCHITECTURE.md). Assignment workflow evidence, brownfield validation, test plans, and engineer sign-off are in [WORKFLOW_EVIDENCE.md](WORKFLOW_EVIDENCE.md).
+The system design is in [ARCHITECTURE.md](ARCHITECTURE.md). Assignment workflow evidence, brownfield validation, test plans, and candidate self-review are in [WORKFLOW_EVIDENCE.md](WORKFLOW_EVIDENCE.md). The chronological AI prompt summary is in [AI-PROMPTS.md](AI-PROMPTS.md).
 
 ## API At A Glance
 
@@ -152,10 +152,10 @@ Actuator exposes `/actuator/health`, `/actuator/health/readiness`, `/actuator/me
 
 ## Testing Approach
 
-The current suite has four Spring Boot/MockMvc integration tests against H2: create/redirect/analytics, invalid destination, unknown code, and expired link. There are not yet isolated unit tests for the service or code generator. No container runtime or Testcontainers is used. Spotless applies Google Java Format; JaCoCo measures line coverage and fails `check` below 80%.
+The current suite has five Spring Boot/MockMvc integration tests against H2 and six `LinkServiceImpl` unit tests. Integration coverage includes create/redirect/analytics, invalid destination, unknown code, expired link, and excessive analytics range. Unit coverage includes analytics bounds, code-collision retry/exhaustion, create/read data-access failure mapping, and analytics-write failure preserving redirects. Failure tests inject exceptions into service dependencies; they do not simulate an actual H2 process outage. No container runtime or Testcontainers is used. Spotless applies Google Java Format; JaCoCo measures line coverage and fails `check` below 80%.
 
-- **Implemented integration coverage:** datasource startup, Flyway migration, API link creation, `302` redirect, analytics count, invalid destination `400`, unknown code `404`, and expired code `410` without a `Location` header or analytics event.
-- **Remaining tests:** isolated Base62 boundaries/randomness, TTL edge cases, analytics range validation, deterministic collision retry/exhaustion, database failure mapping, and redirect-event write failure are listed in [TODO.md](TODO.md).
+- **Implemented integration coverage:** datasource startup, Flyway migration, API link creation, `302` redirect, analytics count, invalid destination `400`, unknown code `404`, expired code `410` without a `Location` header or analytics event, and analytics range `400`.
+- **Remaining tests:** isolated Base62 boundaries/randomness, additional TTL edge cases, and a live-database outage test remain useful follow-ups; they are not substitutes for the current service-level injected-failure tests.
 - **Coverage gate:** JaCoCo enforces at least 80% line coverage across production code during `check`. Coverage is a signal, not a substitute for behavior assertions.
 - **Static analysis:** SonarQube/SonarCloud integration, quality profiles, and remote quality gates are deferred; no Sonar plugin, credentials, or server is required.
 

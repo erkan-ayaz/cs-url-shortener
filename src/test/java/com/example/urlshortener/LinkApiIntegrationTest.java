@@ -145,4 +145,18 @@ class LinkApiIntegrationTest {
                 .count())
         .isEqualTo(errorsBefore + 1);
   }
+
+  @Test
+  void rejectsAnalyticsRangeAboveConfiguredMaximum() throws Exception {
+    OffsetDateTime from = OffsetDateTime.now(ZoneOffset.UTC);
+    mockMvc
+        .perform(
+            get("/api/v1/links/{code}/analytics", "Range001")
+                .param("from", from.toString())
+                .param("to", from.plusDays(367).toString()))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400))
+        .andExpect(
+            jsonPath("$.message").value("The analytics range exceeds the configured maximum"));
+  }
 }

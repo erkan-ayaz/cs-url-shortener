@@ -11,7 +11,7 @@ This prototype was built with engineer-directed AI assistance. The engineer owns
 | 1. Normalize requirements | Define create, redirect, analytics, expiration, error, and volatile-storage behavior; identify deferred caching and security integrations. | `README.md` and `ARCHITECTURE.md`; H2 is explicitly non-durable. |
 | 2. Establish the application | Java 17, Spring Boot MVC, Gradle Wrapper, H2, Flyway, Google Java Format, and JaCoCo. | `build.gradle`, `application.yml`, migration, and `./gradlew check`. |
 | 3. Implement the vertical slice | Create links, generate unique Base62 codes, persist with JPA, redirect with `302`, and query aggregate analytics. | MVC controllers, service interface/implementation, JPA entities/repositories, and H2 integration tests. |
-| 4. Validate lifecycle and failures | Cover invalid destinations, unknown codes, expired links, analytics bounds, collisions, and database/analytics failures. | Create/redirect/analytics, invalid URL, unknown code, and expired-link cases exist. Analytics-bound, collision-retry, and failure-injection tests remain open in `TODO.md`. |
+| 4. Validate lifecycle and failures | Cover invalid destinations, unknown codes, expired links, analytics bounds, collisions, and database/analytics failures. | Five MockMvc/H2 integration tests cover API behavior; six Mockito service tests cover range limits, collision retry/exhaustion, create/read data-access errors, and analytics-write failure. A live H2 outage test remains optional follow-up. |
 | 5. Add quality gates | Enforce formatting and minimum line coverage locally and in pull requests. | Spotless/Google Java Format, JaCoCo 80%, and `.github/workflows/ci.yml`. Sonar remains deferred. |
 | 6. Record operational and release limits | Document timeouts, metrics, logs, volatile data, deferred controls, and the engineer's release decision. | `ARCHITECTURE.md`, `README.md`, and the sign-off record below. |
 
@@ -51,18 +51,18 @@ Dependencies follow the order above: API tests depend on the application/data mo
 
 ## Edge-Case And Failure Test Plan
 
-The existing `LinkApiIntegrationTest` covers valid create/redirect/analytics behavior, an unsupported URL scheme (`400`), unknown code (`404`), and an expired code (`410`) with no analytics event. Add the following behavior-focused tests; these are test specifications, not claims that the cases are implemented today.
+`LinkApiIntegrationTest` and `LinkServiceImplTest` now cover the cases marked implemented below. Database failures are injected as service dependencies; a live H2 outage is not simulated. The remaining cases are explicit follow-up specifications, not claims that they are implemented today.
 
-| Scenario | Test setup | Expected behavior |
+| Scenario | Status and test setup | Expected behavior |
 | --- | --- | --- |
-| Excessive analytics interval | Query a real link with `from` and `to` more than the configured 366-day maximum apart. | `400 Bad Request`; no analytics query result is returned. |
-| Generated-code collision | Mock `ShortCodeGenerator` to return a code already present, then a fresh code; exercise `LinkServiceImpl.createLink`. | Existing row remains unchanged; generator is retried; creation succeeds with the fresh code. Also test repeated collisions exhaust the bounded retry count and map to `503`. |
-| Create/read database failure | Inject a `DataAccessException` from `saveAndFlush` or link lookup using a repository/service test double. | API returns generic `503`; database details are not exposed in the response. |
-| Redirect-event write failure | Arrange `RedirectEventWriter.record` to throw `DataAccessException` after resolving an active link. | Redirect still returns `302`; warning log records the failure; the request does not report a false `404`/`410`. |
-| Past/invalid expiration | Submit an expiration in the past or beyond `APP_LINK_MAX_TTL`. | `400 Bad Request`; no link row is persisted. |
-| Expired existing link | Seed an entity with expiration in the past and request its code. | `410 Gone`; no `Location` header and no redirect event. This case is already implemented. |
+| Excessive analytics interval | Implemented: `LinkApiIntegrationTest` queries a 367-day interval. | `400 Bad Request`; range error returned before database reads. |
+| Generated-code collision | Implemented: `LinkServiceImplTest` covers existing-code retry and five-collision exhaustion. | Retry persists the fresh code; exhaustion raises the bounded failure mapped as unavailable. |
+| Create/read database failure | Implemented: Mockito injects data-access failures into create persistence and redirect lookup; handler mapping is asserted. | Generic `503`; database details are not exposed. This does not simulate a live database outage. |
+| Redirect-event write failure | Implemented: `RedirectEventWriter` throws after an active link resolves. | Service still returns the destination; success metric is incremented and analytics failure is logged. |
+| Past/invalid expiration | Follow-up: submit past and over-limit `expires_at` values through the API. | `400 Bad Request`; no link row is persisted. |
+| Expired existing link | Implemented: seed an entity with expiration in the past and request its code. | `410 Gone`; no `Location` header and no redirect event. |
 
-Prefer service-level Mockito tests for deterministic collision and injected-failure behavior, and retain MockMvc/H2 integration tests for HTTP status, serialization, transactions, and migration behavior.
+Continue using service-level Mockito tests for deterministic collision and injected-failure behavior, and MockMvc/H2 integration tests for HTTP status, serialization, transactions, and migration behavior. Add a live H2 outage test only if the evaluation scope requires infrastructure-failure behavior beyond injected exceptions.
 
 ## CI And Dependency Risk Controls
 

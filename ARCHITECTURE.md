@@ -120,7 +120,7 @@ The namespace contains $62^8 \approx 2.18 \times 10^{14}$ codes. Random generati
 
 **Code strategy:** Use the fixed-width secure-random Base62 approach above. It produces non-sequential codes and avoids a centralized ID allocator. Enforce a unique database constraint and bounded collision retry. Sequential database-ID encoding is simpler and collision-free but leaks approximate volume and makes enumeration trivial; it is not the selected default.
 
-**Initial acceptance gates:** API schema tests, URL and expiry validation, collision simulation, Flyway migration tests on H2, redirect status behavior, analytics persistence tests, and a load test that establishes single-process capacity. Keep persistence behind a repository boundary so a durable datasource can be selected later without changing HTTP semantics.
+**Initial acceptance gates:** API schema tests, URL and expiry validation, collision simulation, Flyway migration tests on H2, redirect status behavior, analytics persistence tests, and the eight-worker concurrency smoke test. The smoke test exercises one local process but does not establish capacity or a production SLO; production load testing against a durable datasource is deferred. Keep persistence behind a repository boundary so a durable datasource can be selected later without changing HTTP semantics.
 
 ### 2. Brownfield: proposed Redis evolution (deferred)
 

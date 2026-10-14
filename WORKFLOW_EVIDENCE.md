@@ -11,7 +11,7 @@ This prototype was built with engineer-directed AI assistance. The engineer owns
 | 1. Normalize requirements | Define create, redirect, analytics, expiration, error, and volatile-storage behavior; identify deferred caching and security integrations. | `README.md` and `ARCHITECTURE.md`; H2 is explicitly non-durable. |
 | 2. Establish the application | Java 17, Spring Boot MVC, Gradle Wrapper, H2, Flyway, Google Java Format, and JaCoCo. | `build.gradle`, `application.yml`, migration, and `./gradlew check`. |
 | 3. Implement the vertical slice | Create links, generate unique Base62 codes, persist with JPA, redirect with `302`, and query aggregate analytics. | MVC controllers, service interface/implementation, JPA entities/repositories, and H2 integration tests. |
-| 4. Validate lifecycle and failures | Cover invalid destinations, unknown codes, expired links, analytics bounds, collisions, and database/analytics failures. | Five MockMvc/H2 integration tests cover API behavior; six Mockito service tests cover range limits, collision retry/exhaustion, create/read data-access errors, and analytics-write failure. A live H2 outage test remains optional follow-up. |
+| 4. Validate lifecycle and failures | Cover invalid destinations, unknown codes, expired links, analytics bounds, collisions, and database/analytics failures. | Five MockMvc/H2 integration tests, one `RANDOM_PORT` concurrency smoke test, and six Mockito service tests cover API behavior, mixed create/redirect concurrency, range limits, collision retry/exhaustion, create/read data-access errors, and analytics-write failure. A live H2 outage test remains optional follow-up. |
 | 5. Add quality gates | Enforce formatting and minimum line coverage locally and in pull requests. | Spotless/Google Java Format, JaCoCo 80%, and `.github/workflows/ci.yml`. Sonar remains deferred. |
 | 6. Record operational and release limits | Document timeouts, metrics, logs, volatile data, deferred controls, and the engineer's release decision. | `ARCHITECTURE.md`, `README.md`, and the sign-off record below. |
 
@@ -64,19 +64,23 @@ Dependencies follow the order above: API tests depend on the application/data mo
 
 Continue using service-level Mockito tests for deterministic collision and injected-failure behavior, and MockMvc/H2 integration tests for HTTP status, serialization, transactions, and migration behavior. Add a live H2 outage test only if the evaluation scope requires infrastructure-failure behavior beyond injected exceptions.
 
+## Lightweight Concurrency Validation
+
+`UrlShortenerLoadTest` starts the application on a random port and uses eight executor workers to issue 96 mixed create/redirect requests through `RestTemplate`. It requires all operations to succeed within a shared 20-second deadline, with five-second HTTP connect/read timeouts and redirect following disabled. This is a repeatable concurrency smoke test for the evaluation app, not a throughput benchmark, capacity claim, or PostgreSQL performance result.
+
 ## CI And Dependency Risk Controls
 
-The pull-request workflow checks out the source, installs Temurin Java 17, and runs `./gradlew check`. It uploads JUnit and JaCoCo reports even when checks fail. Dependabot is configured to propose weekly updates for Gradle dependencies and GitHub Actions. Repository administrators should enable Dependabot security alerts/security updates and require the CI check before merge.
+The pull-request workflow checks out the source, installs Temurin Java 17, and runs `./gradlew check`, including the lightweight H2 concurrency smoke test. It uploads JUnit and JaCoCo reports even when checks fail. Dependabot is configured to propose weekly updates for Gradle dependencies and GitHub Actions. Repository administrators should enable Dependabot security alerts/security updates and require the CI check before merge.
 
 Dependabot version updates and vulnerability alerts are the initial dependency-risk controls. OWASP Dependency-Check can be added as a Gradle task or scheduled workflow if policy requires an explicit CVE gate; establish suppression review, severity threshold, and NVD data-cache strategy before making it a blocking check. No scanner result is implied by the current build. Sonar remains deferred.
 
-Performance/load testing is not currently a CI gate. Before any production claim, establish expected redirect throughput and latency objectives, run repeatable load tests against a durable shared database, and test pool exhaustion, database outage, and recovery. H2 measurements are not representative of PostgreSQL production capacity.
+`UrlShortenerLoadTest` verifies that eight workers can complete 96 mixed create and redirect requests within a 20-second test deadline, using five-second HTTP connect/read timeouts. It is a correctness/concurrency smoke test, not a throughput/latency SLO gate. Before any production claim, establish expected redirect objectives, run repeatable load tests against a durable shared database, and test pool exhaustion, database outage, and recovery. H2 measurements are not representative of PostgreSQL production capacity.
 
 ## Final Engineering Summary
 
 - **Plan and rationale:** deliver the create/redirect/analytics vertical slice on Spring Boot MVC, JPA, Flyway, and H2 first; keep durable PostgreSQL, caching, authentication, and reputation scanning out of the prototype scope.
 - **Artifacts:** API/service/repository layers, schema migration, H2 configuration, Postman collection, Gradle quality gates, PR CI, Dependabot update proposals, architecture and setup docs, and this workflow evidence.
-- **Validation:** `./gradlew check` runs Google Java Format, the H2-backed tests, and the 80% JaCoCo line-coverage gate. It does not provide Sonar analysis, vulnerability scanning, or load testing.
+- **Validation:** `./gradlew check` runs Google Java Format, H2-backed tests, the concurrency smoke test, and the 80% JaCoCo line-coverage gate. It does not provide Sonar analysis, vulnerability scanning, or production-grade load testing.
 - **Key risks and limitations:** H2 state is volatile and process-local; management/analytics APIs are unauthenticated; analytics writes are best-effort; no total HTTP deadline, distributed tracing, alert backend, or production-scale load evidence exists.
 - **Assumptions:** single-process evaluation, local H2, temporary test data, and evaluation-only exposure. PostgreSQL must be separately added/configured before durable or shared-state operation.
 - **Release decision:** the engineer sign-off below is required. The prototype is not declared production-ready.
